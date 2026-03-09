@@ -6,8 +6,7 @@ import io
 DENSIDAD_ACERO = 0.00000785
 
 def optimizar_despiece(ancho_c, largo_c, espesor, pedidos, kerf, metodo):
-
-piezas_pendientes = []
+	piezas_pendientes = []
 for p in pedidos:
 for _ in range(p['cant']):
 w, l = max(p['ancho'], p['largo']), min(p['ancho'], p['largo'])
