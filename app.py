@@ -3,135 +3,106 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import io
 
-# --- LÓGICA DE OPTIMIZACIÓN Y DIBUJO ---
-def generar_nesting(ancho_chapa, largo_chapa, pedidos, kerf):
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.set_xlim(0, ancho_chapa)
-    ax.set_ylim(0, largo_chapa)
-    ax.set_aspect('equal')
-    
-    # Dibujar la chapa base (Gris claro)
-    ax.add_patch(patches.Rectangle((0, 0), ancho_chapa, largo_chapa, color='#F0F0F0', ec='#333333', lw=2))
-
-    # Expandir pedidos y normalizar (Rotación automática para que el lado largo sea la base)
-    piezas_a_cortar = []
-    for p in pedidos:
+# --- LÓGICA DE OPTIMIZACIÓN MULTI-CHAPA ---
+def optimizar_multi_chapa(ancho_chapa, largo_chapa, pedidos, kerf):
+    piezas_totales = []
+    for i, p in enumerate(pedidos):
         for _ in range(p['cant']):
-            # Rotación automática: orientamos la pieza para que 'ancho' sea la dimensión mayor
+            # Rotación automática: el lado más largo es la base
             w, l = max(p['ancho'], p['largo']), min(p['ancho'], p['largo'])
-            piezas_a_cortar.append({'w': w, 'l': l, 'nombre': f"{p['ancho']}x{p['largo']}"})
+            piezas_totales.append({'w': w, 'l': l, 'id': i})
     
-    # Ordenar piezas por altura (largo) de mayor a menor (Algoritmo FFDH)
-    piezas_a_cortar.sort(key=lambda x: x['l'], reverse=True)
+    # Ordenar por altura para el algoritmo de estantes
+    piezas_totales.sort(key=lambda x: x['l'], reverse=True)
 
-    x_actual, y_actual = 0, 0
-    altura_max_estante = 0
-    piezas_colocadas = 0
-    area_piezas = 0
-
-    for p in piezas_a_cortar:
-        # ¿Cabe en el estante actual a lo ancho?
-        if x_actual + p['w'] > ancho_chapa:
-            # No cabe, saltar al siguiente estante (arriba)
-            x_actual = 0
-            y_actual += altura_max_estante + kerf
-            altura_max_estante = 0
-
-        # ¿Cabe en la chapa a lo largo (altura)?
-        if y_actual + p['l'] <= largo_chapa:
-            # Dibujar la pieza
-            ax.add_patch(patches.Rectangle((x_actual, y_actual), p['w'], p['l'], 
-                                         edgecolor='#004d40', facecolor='#81c784', alpha=0.9, lw=1))
-            
-            # Etiqueta de medidas
-            ax.text(x_actual + p['w']/2, y_actual + p['l']/2, p['nombre'], 
-                    color='black', ha='center', va='center', fontsize=7, fontweight='bold')
-            
-            area_piezas += (p['w'] * p['l'])
-            x_actual += p['w'] + kerf
-            altura_max_estante = max(altura_max_estante, p['l'])
-            piezas_colocadas += 1
-
-    eficiencia = (area_piezas / (ancho_chapa * largo_chapa)) * 100
-    plt.title(f"Plan de Corte: {piezas_colocadas} piezas | Eficiencia: {eficiencia:.2f}%", pad=20)
-    plt.xlabel("Ancho (mm)")
-    plt.ylabel("Largo (mm)")
+    chapas_resultados = []
     
-    return fig, piezas_colocadas, eficiencia
+    while piezas_totales:
+        fig, ax = plt.subplots(figsize=(10, 5))
+        ax.set_xlim(0, ancho_chapa)
+        ax.set_ylim(0, largo_chapa)
+        ax.add_patch(patches.Rectangle((0, 0), ancho_chapa, largo_chapa, color='#F0F0F0', ec='black'))
+        
+        x_actual, y_actual = 0, 0
+        altura_max_estante = 0
+        piezas_en_esta_chapa = []
+        indices_a_eliminar = []
 
-# --- INTERFAZ DE USUARIO (STREAMLIT) ---
-st.set_page_config(page_title="Optimizador de Chapa Pro", layout="wide")
+        for i, p in enumerate(piezas_totales):
+            # Verificar si cabe en el estante o requiere uno nuevo
+            if x_actual + p['w'] > ancho_chapa:
+                x_actual = 0
+                y_actual += altura_max_estante + kerf
+                altura_max_estante = 0
 
-st.markdown("""
-    <style>
-    .main { background-color: #f5f5f5; }
-    .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #4CAF50; color: white; }
-    </style>
-    """, unsafe_allow_html=True)
+            # Si cabe en la chapa actual
+            if y_actual + p['l'] <= largo_chapa:
+                ax.add_patch(patches.Rectangle((x_actual, y_actual), p['w'], p['l'], 
+                             facecolor='#4CAF50', edgecolor='white', alpha=0.8))
+                ax.text(x_actual + p['w']/2, y_actual + p['l']/2, f"{p['w']}x{p['l']}", 
+                        ha='center', va='center', fontsize=8, color='white')
+                
+                x_actual += p['w'] + kerf
+                altura_max_estante = max(altura_max_estante, p['l'])
+                indices_a_eliminar.append(i)
+            else:
+                continue # Probar la siguiente pieza pequeña si la grande no cupo
 
-st.title("✂️ Nesting App: Optimización de Cortes")
+        # Quitar las piezas que ya colocamos de la lista general
+        for index in sorted(indices_a_eliminar, reverse=True):
+            piezas_totales.pop(index)
+        
+        chapas_resultados.append(fig)
+        if len(chapas_resultados) > 20: # Límite de seguridad
+            break
+            
+    return chapas_resultados
 
-# Inicializar lista de piezas en la sesión
+# --- INTERFAZ ---
+st.set_page_config(page_title="Nesting Pro Multi-Chapa", layout="wide")
+st.title("✂️ Optimizador de Corte (Multi-Chapa)")
+
 if 'pedidos' not in st.session_state:
     st.session_state.pedidos = []
 
-# --- COLUMNA LATERAL: ENTRADA DE DATOS ---
 with st.sidebar:
-    st.header("📏 Medidas Chapa Madre")
-    ch_ancho = st.number_input("Ancho Total (mm)", value=2440)
-    ch_largo = st.number_input("Largo Total (mm)", value=1220)
-    kerf = st.number_input("Espesor del disco (mm)", value=4, help="Ancho de la sierra que se pierde en cada corte")
-    
+    st.header("⚙️ Configuración")
+    ancho_c = st.number_input("Ancho Chapa (mm)", value=2440)
+    largo_c = st.number_input("Largo Chapa (mm)", value=1220)
+    kerf = st.number_input("Grosor Corte (mm)", value=4)
     st.divider()
-    
-    st.header("🧩 Añadir Piezas")
-    p_ancho = st.number_input("Ancho de pieza", value=500)
-    p_largo = st.number_input("Largo de pieza", value=300)
-    p_cant = st.number_input("Cantidad", value=1, min_value=1)
-    
-    if st.button("Añadir a la lista"):
-        st.session_state.pedidos.append({'ancho': p_ancho, 'largo': p_largo, 'cant': p_cant})
+    st.header("➕ Nueva Pieza")
+    nw = st.number_input("Ancho", value=600)
+    nl = st.number_input("Largo", value=400)
+    nc = st.number_input("Cantidad", value=1, min_value=1)
+    if st.button("Añadir a Pedido"):
+        st.session_state.pedidos.append({'ancho': nw, 'largo': nl, 'cant': nc})
         st.rerun()
 
-    if st.button("🗑️ Limpiar Todo", type="secondary"):
-        st.session_state.pedidos = []
-        st.rerun()
+# --- LISTA DE PIEZAS CON OPCIÓN DE BORRAR ---
+col_lista, col_graficos = st.columns([1, 2])
 
-# --- ÁREA DE RESULTADOS ---
-col1, col2 = st.columns([1, 2])
+with col_lista:
+    st.subheader("📋 Detalle del Pedido")
+    for i, p in enumerate(st.session_state.pedidos):
+        c1, c2 = st.columns([3, 1])
+        c1.write(f"**{p['cant']} uds** de {p['ancho']}x{p['largo']}")
+        if c2.button("🗑️", key=f"del_{i}"):
+            st.session_state.pedidos.pop(i)
+            st.rerun()
 
-with col1:
-    st.subheader("📋 Lista de Corte")
+with col_graficos:
     if st.session_state.pedidos:
-        for idx, p in enumerate(st.session_state.pedidos):
-            st.info(f"**{p['cant']} uds** de {p['ancho']} x {p['largo']} mm")
-    else:
-        st.write("No hay piezas añadidas aún.")
-
-with col2:
-    st.subheader("📊 Mapa de Aprovechamiento")
-    if st.session_state.pedidos:
-        fig, total_p, rendimiento = generar_nesting(ch_ancho, ch_largo, st.session_state.pedidos, kerf)
-        st.pyplot(fig)
+        chapas = optimizar_multi_chapa(ancho_c, largo_c, st.session_state.pedidos, kerf)
+        st.success(f"✅ Se necesitan **{len(chapas)} chapas** en total.")
         
-        # Métricas rápidas
-        m1, m2 = st.columns(2)
-        m1.metric("Piezas Colocadas", total_p)
-        m2.metric("Aprovechamiento", f"{rendimiento:.2f}%")
-
-        # --- BOTÓN DE DESCARGA PDF ---
-        buf = io.BytesIO()
-        fig.savefig(buf, format="pdf", bbox_inches='tight')
-        buf.seek(0)
-        
-        st.download_button(
-            label="📥 Descargar Plano en PDF",
-            data=buf,
-            file_name="plano_despiece.pdf",
-            mime="application/pdf"
-        )
+        for idx, fig in enumerate(chapas):
+            st.write(f"### Chapa {idx + 1}")
+            st.pyplot(fig)
+            
+            # Botón de descarga para cada chapa
+            buf = io.BytesIO()
+            fig.savefig(buf, format="pdf")
+            st.download_button(f"Descargar Chapa {idx+1} (PDF)", buf.getvalue(), f"chapa_{idx+1}.pdf")
     else:
-        st.warning("Agrega dimensiones en el panel de la izquierda para generar el mapa.")
-
-st.divider()
-st.caption("Desarrollado para optimización de procesos industriales de corte recto.")
+        st.info("Añade piezas para calcular el despiece.")
